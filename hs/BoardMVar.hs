@@ -1,6 +1,6 @@
 {-# LANGUAGE TypeFamilies #-}
 
-module BoardTVar where
+module BoardMVar where
 
 import Control.Concurrent.MVar
 import Control.Monad
@@ -41,8 +41,8 @@ emptyBoardMV h w = do
                            [(i,j) | i <- [1..w], j <- [1..h]]
                            mvars))
 
-moveAnt :: (Thing t) => MBoard t -> Coords -> Coords -> IO Bool
-moveAnt b from to = do
+moveAnt :: (Thing t) => [MoveFlag] -> MBoard t -> Coords -> Coords -> IO Bool
+moveAnt flags b from to = do
   let fromMV = getField b from
   let toMV = getField b to
   toCont <- takeMVar toMV

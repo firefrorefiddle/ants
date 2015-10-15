@@ -81,7 +81,7 @@ moveAroundRandom :: Int -> Life
 moveAroundRandom 0   _ _ = return ()
 moveAroundRandom tdl b pos = do
   newPos <- randomNeighbour b pos
-  res <- move b pos newPos
+  res <- tryMove b pos newPos
   case res of
    False -> do threadDelay blockDelay
                moveAroundRandom tdl b pos
@@ -133,7 +133,7 @@ antsMain = do
          [] -> 0.2
          [f] -> read f :: Float
   b <- emptyBoard 40 40
-  let tdl = 10000
+  let tdl = 1000
   let w = 40
   let h = 40
   mvs <- replicateM (round $ w*h*contentionFactor)

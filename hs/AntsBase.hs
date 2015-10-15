@@ -20,21 +20,48 @@ import System.Process
 import System.Environment
 import System.IO.Unsafe
 import System.Time
-
 import BoardClass
 import ThingClass
+
+import BoardTVar
+import ThingADT
 
 neighbours :: (BoardImpl b) => b -> Coords -> [Coords]
 neighbours b (i,j) = filter onBoard [(i+1,j), (i-1,j), (i,j+1), (i,j-1)]
   where onBoard (i,j) = i >= 1 && i <= width b &&
                         j >= 1 && j <= height b
 
-randomNeighbour :: (BoardImpl b) => b -> Coords -> IO Coords
-randomNeighbour b c = do
-  let cands = neighbours b c
+neighbours8 :: (BoardImpl b) => b -> Coords -> [Coords]
+neighbours8 b (i,j) = filter onBoard [(i',j') | i' <- [i-1,i,i+1], j' <- [j-1,j,j+1]]
+  where onBoard (i,j) = i >= 1 && i <= width b &&
+                        j >= 1 && j <= height b
+
+randomNeighbour :: [Coords] -> IO Coords
+randomNeighbour cands = do
   idx <- (`mod` length cands) <$> randomIO
   return $ cands !! idx
-    
+
+randomNeighbourWeighted :: [Coords] -> (Coords -> Int) -> IO Coords
+randomNeighbourWeighted cands wf = do
+  let weights = map wf cands
+      weights' = if minimum weights <= 0
+                 then map (+ (abs (minimum weights) + 1)) weights
+                 else weights
+  i <- randomRIO (1, sum weights')
+  return $ getCand i (zip cands weights')
+ where getCand 0 ((c,_):_) = c
+       getCand w ((c,wi):cs) | w <= wi = c
+                             | otherwise = getCand (w-wi) cs
+
+wfProgress :: Coords -> Coords -> Coords -> Int
+wfProgress (xfrom,yfrom) (xto,yto) (xcand,ycand) =
+  (absdiff xto xfrom - absdiff xto xcand) +
+  (absdiff yto yfrom - absdiff yto ycand)
+  where absdiff x y = abs (abs x - abs y)
+
+wfNeutral :: Coords -> Int
+wfNeutral = const 1
+
 mmap = map.map
 
 showBoardBase :: (BoardImpl b, PrintfType r) => (r -> r -> r) -> b -> IO r
@@ -80,7 +107,7 @@ maxDelay   = 150
 moveAroundRandom :: Int -> Life
 moveAroundRandom 0   _ _ = return ()
 moveAroundRandom tdl b pos = do
-  newPos <- randomNeighbour b pos
+  newPos <- randomNeighbour (neighbours b pos)
   res <- tryMove b pos newPos
   case res of
    False -> do threadDelay blockDelay
@@ -88,6 +115,18 @@ moveAroundRandom tdl b pos = do
    True -> do delay <- (+minDelay) . (`mod` (maxDelay-minDelay)) <$> randomIO 
               threadDelay delay
               moveAroundRandom (tdl-1) b newPos
+
+moveTo :: Coords -> Life
+moveTo toPos b pos | toPos == pos = return ()
+                   | otherwise = do
+                       newPos <- randomNeighbourWeighted (neighbours8 b pos) (wfProgress pos toPos)
+                       res <- tryMove b pos newPos
+                       case res of
+                        False -> do threadDelay blockDelay
+                                    moveTo toPos b pos
+                        True -> do delay <- (+minDelay) . (`mod` (maxDelay-minDelay)) <$> randomIO 
+                                   threadDelay delay
+                                   moveTo toPos b newPos
 
 addLiveAnt :: (BoardImpl b) => b -> Life -> IO (MVar ())
 addLiveAnt b l = do
@@ -115,7 +154,7 @@ showUpdates b totalMoves = do
             ((fromIntegral moves*100 / fromIntegral totalMoves) :: Double)
           printf "      mps: %7.2f\n" (mps (moves-oldMoves) diff)
           printf "  avg mps: %7.2f\n" (mps moves (time `diffClockTimes` initTime))          
---          printBoard b
+          printBoard b
           threadDelay 100000
           go moves initTime time
 
@@ -139,6 +178,18 @@ antsMain = do
   mvs <- replicateM (round $ w*h*contentionFactor)
          (addLiveAnt b (moveAroundRandom tdl))
   forkIO $ showUpdates b (round $ w*h*contentionFactor*fromIntegral tdl)
+  mapM_ takeMVar mvs
+  threadDelay 200000
+  validateBoard b >>= print
+  return b
+
+antsMainPos :: Int -> Int -> (BoardImpl b) => IO b
+antsMainPos w h = do
+  b <- emptyBoard w h
+  let poss = [(x,y) | x <- [1,3..w-1], y <- [1,3..w-1]] ++
+             [(x,y) | x <- [2,4..w],   y <- [2,4..w]]
+  mvs <- mapM (\toPos -> addLiveAnt b (moveTo toPos)) poss
+  forkIO $ showUpdates b (100000)
   mapM_ takeMVar mvs
   threadDelay 200000
   validateBoard b >>= print
